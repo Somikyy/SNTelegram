@@ -1,0 +1,29 @@
+name: SNTelegram
+version: '${version}'
+main: network.somikyy.sntelegram.bukkit.SNTelegramPlugin
+api-version: '1.21'
+# Стоит false честно. Код написан так, чтобы работать и на Folia — планировщики
+# GlobalRegionScheduler и AsyncScheduler входят в обычный paper-api, поэтому один и тот же
+# вызов работает на обеих платформах, а kick на Folia прямо объявлен потокобезопасным.
+# Но на живом сервере Folia плагин пока не проверялся, а помечать поддержку без проверки —
+# это ровно то, из-за чего админы перестают доверять флагу. Появится проверка — сменим.
+folia-supported: false
+description: 'Мост чата между сервером и Telegram с модерацией прямо из переписки.'
+website: 'https://t.me/somikyy'
+authors: [ Somikyy ]
+load: POSTWORLD
+
+commands:
+  sntelegram:
+    description: Состояние моста, перезагрузка настроек, импорт из другого плагина
+    aliases: [ sntg, тг ]
+    usage: /sntelegram [status|reload|import|version]
+    permission: sntelegram.use
+
+permissions:
+  sntelegram.use:
+    description: Просмотр состояния моста
+    default: op
+  sntelegram.reload:
+    description: Перезагрузка config.yml и импорт настроек из другого плагина
+    default: op

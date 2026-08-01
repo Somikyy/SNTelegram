@@ -1,0 +1,88 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Both builds below must use the SAME JDK: the stub check compares the bytecode they
+      # produce, and two different javac versions would show up as differences that mean nothing.
+      #
+      # 21, not 17: paper-api 1.21.4 is published for Java 21 and Gradle will not resolve it onto
+      # a Java 17 classpath. Both builds compile with 21 and emit 17 (`--release 17` in
+      # build-offline.sh, `options.release` in build.gradle.kts), so the jar still runs on the
+      # 1.21.x servers that have not moved to Java 25.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # The offline path is the source of truth for behaviour: it needs no network, so a
+      # repo.papermc.io outage can never turn CI red for the wrong reason. It also needs nothing
+      # beyond the JDK and bash, which is why it is the same command a contributor runs on their
+      # own machine.
+      - name: Build and self-test (offline)
+        run: bash tools/offline/verify.sh
+
+      # core/ must never touch the server. That invariant is what makes the offline self-test
+      # possible at all: it runs the real bridge logic on a machine with no server jar.
+      - name: Check layering invariant
+        run: |
+          if grep -rn "import org\.bukkit\|import io\.papermc\|import net\.kyori\|import com\.destroystokyo" \
+                  src/main/java/network/somikyy/sntelegram/core; then
+            echo "::error::core/ must not import server-supplied classes"
+            exit 1
+          fi
+          echo "layering ok"
+
+      - name: Install Gradle
+        id: gradle_setup
+        continue-on-error: true
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10'
+
+      # Needs the network, so it is allowed to fail; the check below simply does not run then.
+      - name: Gradle build against the real paper-api
+        id: gradle_build
+        if: steps.gradle_setup.outcome == 'success'
+        continue-on-error: true
+        run: gradle build --no-daemon
+
+      # THE important check. The offline build compiles against hand-written stubs, and a stub
+      # whose signature differs from the real one is invisible at compile time: the return type is
+      # part of the JVM method descriptor, so a stub declaring `append(ComponentLike)` where
+      # Adventure has `append(Component)` produces a jar that asks for a method nobody has, and the
+      # plugin dies with NoSuchMethodError the first time that line runs.
+      #
+      # Adventure makes this sharper than usual: several of the calls this plugin emits erase to
+      # signatures nobody would guess - MiniMessage.deserialize takes Object, BanList.pardon takes
+      # Object. Those were found by running exactly this comparison.
+      #
+      # Same sources, same JDK, two different sets of server class files: any difference here is a
+      # stub that lies. This one is blocking.
+      - name: Stubs must match the real paper-api
+        if: steps.gradle_build.outcome == 'success'
+        run: |
+          bash tools/offline/api-surface.sh build/offline/classes --all > /tmp/from-stubs.txt
+          bash tools/offline/api-surface.sh build/classes/java/main --all > /tmp/from-paper.txt
+          if ! diff -u /tmp/from-paper.txt /tmp/from-stubs.txt; then
+            echo "::error::tools/offline/bukkit-stubs disagrees with the real paper-api - the offline jar would throw NoSuchMethodError at runtime"
+            exit 1
+          fi
+          echo "stubs agree with paper-api"
+
+      - name: Report that the stub check was skipped
+        if: steps.gradle_build.outcome != 'success'
+        run: echo "::warning::Gradle build did not run, so the stubs were not checked against the real paper-api"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SNTelegram-jar
+          path: build/offline/jar/SNTelegram-*.jar
