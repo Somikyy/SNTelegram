@@ -15,6 +15,7 @@ import io.papermc.paper.ban.BanListType;
 
 import net.kyori.adventure.text.Component;
 
+import network.somikyy.sntelegram.core.ModerationCommand;
 import network.somikyy.sntelegram.core.MuteBook;
 import network.somikyy.sntelegram.core.TelegramText;
 import network.somikyy.sntelegram.core.TimeSpan;
@@ -68,6 +69,27 @@ final class Moderation {
     static List<String> keysFor(UUID uuid, String name) {
         String byName = "n:" + (name == null ? "" : name.toLowerCase(Locale.ROOT));
         return uuid == null ? List.of(byName) : List.of("u:" + uuid, byName);
+    }
+
+    /**
+     * The subset of verbs that work with no bridge at all.
+     *
+     * <p>Used when Telegram is unreachable or unconfigured. Only the verbs that change something
+     * on this server are here - {@code /list} and {@code /status} exist as in-game commands
+     * already, and there is nowhere to send an announcement.
+     */
+    void runWithoutBridge(ModerationCommand command, String by, Consumer<String> answer) {
+        switch (command.action()) {
+            case MUTE -> mute(command.targetName(), command.durationMillis(),
+                    command.reason(), by, answer);
+            case UNMUTE -> unmute(command.targetName(), answer);
+            case KICK -> kick(command.targetName(), command.reason(), by, answer);
+            case BAN -> ban(command.targetName(), command.durationMillis(),
+                    command.reason(), by, answer);
+            case UNBAN -> unban(command.targetName(), answer);
+            case INFO -> info(command.targetName(), answer);
+            default -> answer.accept("Эта команда доступна только когда мост в Telegram запущен.");
+        }
     }
 
     // ---------------------------------------------------------------- actions

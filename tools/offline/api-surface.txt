@@ -36,6 +36,7 @@ org/bukkit/OfflinePlayer.getUniqueId:()Ljava/util/UUID;
 org/bukkit/OfflinePlayer.hasPlayedBefore:()Z
 org/bukkit/OfflinePlayer.isBanned:()Z
 org/bukkit/Server.getPluginManager:()Lorg/bukkit/plugin/PluginManager;
+org/bukkit/command/CommandSender.getName:()Ljava/lang/String;
 org/bukkit/command/CommandSender.hasPermission:(Ljava/lang/String;)Z
 org/bukkit/command/CommandSender.sendMessage:(Lnet/kyori/adventure/text/Component;)V
 org/bukkit/command/PluginCommand.setExecutor:(Lorg/bukkit/command/CommandExecutor;)V

@@ -40,6 +40,16 @@ public final class SNTelegramPlugin extends JavaPlugin {
     private Bridge bridge;
     private Scheduling scheduling;
 
+    /**
+     * Owned here, not by the bridge, so that {@code /sntelegram mute} works even when the bridge
+     * does not.
+     *
+     * <p>Without this the failure mode is genuinely bad: a player muted forever could never be
+     * unmuted if the token expired or Telegram became unreachable, because the only path to the
+     * unmute command would be through Telegram itself.
+     */
+    private Moderation moderation;
+
     @Override
     public void onEnable() {
         this.scheduling = new Scheduling(this);
@@ -55,6 +65,8 @@ public final class SNTelegramPlugin extends JavaPlugin {
         } catch (IOException e) {
             getLogger().log(Level.WARNING, "Не удалось прочитать список мутов, начинаем с пустого", e);
         }
+
+        this.moderation = new Moderation(mutes, false);
 
         SNTelegramCommand command = new SNTelegramCommand(this);
         if (getCommand("sntelegram") != null) {
@@ -95,7 +107,7 @@ public final class SNTelegramPlugin extends JavaPlugin {
     // ---------------------------------------------------------------- wiring
 
     private void startBridge() {
-        bridge = new Bridge(config, mutes, scheduling, logger());
+        bridge = new Bridge(config, mutes, moderation, scheduling, logger());
         getServer().getPluginManager().registerEvents(new GameListeners(config, bridge), this);
         bridge.start();
         bridge.sendEvent(EventKind.SERVER, config.templates().serverStart());
@@ -132,6 +144,10 @@ public final class SNTelegramPlugin extends JavaPlugin {
 
     MuteBook mutes() {
         return mutes;
+    }
+
+    Moderation moderation() {
+        return moderation;
     }
 
     Scheduling scheduling() {

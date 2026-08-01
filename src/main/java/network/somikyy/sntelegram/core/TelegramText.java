@@ -218,6 +218,44 @@ public final class TelegramText {
     }
 
     /**
+     * Turns a Telegram HTML message back into plain text.
+     *
+     * <p>The moderation code produces one sentence and sends it to Telegram as HTML. The same
+     * sentence has to appear in the server console when the same command is typed there, and
+     * nobody wants to read {@code &lt;b&gt;Steve&lt;/b&gt;} in a log. Rather than have every
+     * message built twice, it is built once and undressed here.
+     *
+     * <p>Not a general HTML parser and must never become one: it strips tags and undoes the
+     * three entities {@link #escapeHtml} creates, which is exactly the inverse of what the bridge
+     * itself produces.
+     */
+    public static String stripHtml(String html) {
+        if (html == null || html.isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder(html.length());
+        boolean inTag = false;
+        for (int i = 0; i < html.length(); i++) {
+            char c = html.charAt(i);
+            if (inTag) {
+                inTag = c != '>';
+                continue;
+            }
+            if (c == '<') {
+                inTag = true;
+                continue;
+            }
+            out.append(c);
+        }
+        // Order matters and is the reverse of escaping: &amp; goes last, or "&amp;lt;" would
+        // become "<" instead of "&lt;".
+        return out.toString()
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&");
+    }
+
+    /**
      * Cuts text to fit {@link #MAX_MESSAGE_CHARS}, never splitting a surrogate pair.
      *
      * <p>Splitting one produces a lone half-character, which Telegram rejects outright - so a

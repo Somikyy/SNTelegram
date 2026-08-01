@@ -39,6 +39,7 @@ public final class LogicProbe {
         configLoading();
         replyIndex();
         formatting();
+        consoleCommands();
     }
 
     // ---------------------------------------------------------------- forum topics
@@ -254,6 +255,56 @@ public final class LogicProbe {
         System.out.println("safety.html-escaped="
                 + TelegramText.escapeHtml("<b>Steve</b> & <script>").equals(
                         "&lt;b&gt;Steve&lt;/b&gt; &amp; &lt;script&gt;"));
+
+        // The console prints the same sentence Telegram gets, undressed. Building it twice would
+        // let the two wordings drift, and the console one is used when something is already wrong.
+        System.out.println("console.strips-tags="
+                + TelegramText.stripHtml("🔇 <b>Steve</b> не сможет писать в чат 10 минут."));
+        System.out.println("console.unescapes="
+                + TelegramText.stripHtml("&lt;тег&gt; &amp; текст").equals("<тег> & текст"));
+        // Round trip: escaping then stripping must give back exactly the original.
+        String tricky = "<b>Steve</b> & <script> \"кавычки\"";
+        System.out.println("console.roundtrip="
+                + TelegramText.stripHtml(TelegramText.escapeHtml(tricky)).equals(tricky));
+    }
+
+    // ---------------------------------------------------------------- console path
+
+    /**
+     * The server console rebuilds its arguments into the line the Telegram parser expects, so both
+     * paths share every rule about durations, aliases and targets. These assert that the rebuild
+     * really does produce identical results.
+     */
+    private static void consoleCommands() {
+        ModerationCommand console = fromConsole("mute", "Steve", "10m", "флуд", "в", "чате");
+        System.out.println("console.action=" + console.action());
+        System.out.println("console.target=" + console.targetName());
+        System.out.println("console.duration=" + console.durationMillis());
+        System.out.println("console.reason=" + console.reason());
+
+        // Identical to what the same command typed in Telegram produces.
+        ModerationCommand telegram = ModerationCommand.parse("/mute Steve 10m флуд в чате", null);
+        System.out.println("console.matches-telegram=" + console.equals(telegram));
+
+        // Russian works from the console too.
+        System.out.println("console.ru=" + (fromConsole("бан", "Steve", "7д", "гриф").action()
+                == ModerationCommand.Action.BAN));
+
+        // From the console there is nothing to reply to, so a missing nickname must be reported
+        // rather than guessed - and a duration must still not be mistaken for one.
+        System.out.println("console.needs-target=" + fromConsole("mute").needsTarget());
+        System.out.println("console.duration-not-a-name=" + fromConsole("mute", "10m").needsTarget());
+
+        // The plugin's own verbs must not be swallowed by the moderation parser.
+        System.out.println("console.reload-not-moderation=" + !fromConsole("reload").known());
+        System.out.println("console.import-not-moderation=" + !fromConsole("import").known());
+        // ...and a typo must be reported, not silently treated as something else.
+        System.out.println("console.typo-unknown=" + !fromConsole("relaod").known());
+    }
+
+    /** Rebuilds console arguments exactly the way SNTelegramCommand does. */
+    private static ModerationCommand fromConsole(String... args) {
+        return ModerationCommand.parse("/" + String.join(" ", args), null);
     }
 
     // ---------------------------------------------------------------- helpers

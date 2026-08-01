@@ -12,6 +12,8 @@ package network.somikyy.sntelegram.bukkit;
 import network.somikyy.sntelegram.core.Build;
 import network.somikyy.sntelegram.core.Config;
 import network.somikyy.sntelegram.core.Importer;
+import network.somikyy.sntelegram.core.ModerationCommand;
+import network.somikyy.sntelegram.core.TelegramText;
 import network.somikyy.sntelegram.core.Topic;
 
 import org.bukkit.command.Command;
@@ -60,9 +62,70 @@ final class SNTelegramCommand implements CommandExecutor, TabCompleter {
             case "version", "версия" -> sender.sendMessage(TextRender.template(
                     "<gray>SNTelegram</gray> <white>" + Build.VERSION + "</white> "
                             + "<dark_gray>·</dark_gray> <gray>" + Build.CHANNEL + "</gray>"));
-            default -> status(sender);
+            case "status", "статус" -> status(sender);
+            // Everything else is tried as a moderation verb, and only then rejected. Falling
+            // through to the status screen - which is what this did - is worse than an error:
+            // the admin typed something meaningful, got a wall of unrelated text, and had no
+            // way to tell whether the command had run.
+            default -> moderate(sender, args);
         }
         return true;
+    }
+
+    /**
+     * Moderation from the server console: {@code /sntelegram mute Steve 10m флуд}.
+     *
+     * <p>Exists for the case the Telegram path cannot cover. If the token expires or the route to
+     * Telegram dies, every command in this plugin would otherwise be unreachable - including the
+     * one that lifts a permanent mute. An admin standing at the console must never be locked out
+     * of their own server by an outage somewhere else.
+     *
+     * <p>The line is handed to the same parser the Telegram side uses, by rebuilding it into the
+     * shape that parser expects. That is deliberate: durations, Russian aliases and the rule that
+     * stops a duration being mistaken for a nickname are then identical on both paths, and the
+     * self-test that covers one covers the other.
+     */
+    private void moderate(CommandSender sender, String[] args) {
+        ModerationCommand parsed = ModerationCommand.parse("/" + String.join(" ", args), null);
+        if (!parsed.known()) {
+            sender.sendMessage(TextRender.template("<red>Неизвестная команда «"
+                    + escape(args[0]) + "».</red>\n"
+                    + "<gray>Доступно: </gray><white>status, reload, import, version</white>"
+                    + "<gray>, а также модерация: </gray><white>mute, unmute, kick, ban, unban, "
+                    + "info, list</white><gray>.</gray>\n"
+                    + "<gray>Например: </gray><white>/sntelegram mute Steve 10m флуд</white>"));
+            return;
+        }
+        if (!sender.hasPermission("sntelegram.moderate")) {
+            sender.sendMessage(TextRender.template("<red>Недостаточно прав.</red>"));
+            return;
+        }
+        if (parsed.needsTarget()) {
+            sender.sendMessage(TextRender.template("<red>Не указан игрок.</red> <gray>Из консоли "
+                    + "ник обязателен — отвечать здесь не на что: </gray><white>/sntelegram "
+                    + parsed.action().name().toLowerCase(Locale.ROOT) + " Ник</white>"));
+            return;
+        }
+
+        Bridge bridge = plugin.bridge();
+        String by = sender.getName();
+        // The console gets plain text; Telegram gets the same sentence as HTML. Building it once
+        // and undressing it is what keeps the two wordings from drifting apart.
+        java.util.function.Consumer<String> answer = html -> {
+            sender.sendMessage(TextRender.template("<white>"
+                    + escape(TelegramText.stripHtml(html)) + "</white>"));
+            if (bridge != null) {
+                // The team watching Telegram should see console actions too, otherwise the
+                // moderation log has holes exactly where someone worked around an outage.
+                bridge.announceModeration(html);
+            }
+        };
+        if (bridge != null) {
+            bridge.run(parsed, by, answer, answer);
+            return;
+        }
+        // No bridge: act anyway. This is the whole reason the command exists.
+        plugin.moderation().runWithoutBridge(parsed, by, answer);
     }
 
     private void status(CommandSender sender) {
@@ -158,7 +221,8 @@ final class SNTelegramCommand implements CommandExecutor, TabCompleter {
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (args.length == 1) {
-            return filter(List.of("status", "reload", "import", "version"), args[0]);
+            return filter(List.of("status", "reload", "import", "version",
+                    "mute", "unmute", "kick", "ban", "unban", "info", "list"), args[0]);
         }
         if (args.length == 2 && args[0].equalsIgnoreCase("import")) {
             return filter(Importer.sources(), args[1]);

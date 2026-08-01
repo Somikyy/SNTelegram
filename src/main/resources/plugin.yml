@@ -15,9 +15,9 @@ load: POSTWORLD
 
 commands:
   sntelegram:
-    description: Состояние моста, перезагрузка настроек, импорт из другого плагина
+    description: Состояние моста, модерация из консоли, перезагрузка настроек, импорт
     aliases: [ sntg, тг ]
-    usage: /sntelegram [status|reload|import|version]
+    usage: /sntelegram [status|reload|import|version|mute|unmute|kick|ban|unban|info]
     permission: sntelegram.use
 
 permissions:
@@ -26,4 +26,10 @@ permissions:
     default: op
   sntelegram.reload:
     description: Перезагрузка config.yml и импорт настроек из другого плагина
+    default: op
+  # Отдельно от sntelegram.use: смотреть состояние моста безопасно, а банить — нет.
+  # Нужна и на случай, когда Telegram недоступен: тогда консоль — единственный способ
+  # снять мут или бан.
+  sntelegram.moderate:
+    description: Мут, размут, кик, бан и разбан из консоли сервера
     default: op

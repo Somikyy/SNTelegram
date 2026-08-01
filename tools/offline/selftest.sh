@@ -150,6 +150,23 @@ expect "$L" "  и без стилей"                                  "safety.
 expect "$L" "HTML в сторону Telegram экранируется"            "safety.html-escaped=true"
 
 echo
+echo "==> модерация из консоли сервера"
+expect "$L" "консоль получает тот же текст без разметки"      "console.strips-tags=🔇 Steve не сможет писать в чат 10 минут."
+expect "$L" "  сущности разворачиваются обратно"             "console.unescapes=true"
+expect "$L" "  экранирование обратимо"                        "console.roundtrip=true"
+expect "$L" "команда из консоли разбирается тем же кодом"     "console.action=MUTE"
+expect "$L" "  ник"                                           "console.target=Steve"
+expect "$L" "  срок"                                          "console.duration=600000"
+expect "$L" "  причина"                                       "console.reason=флуд в чате"
+expect "$L" "  результат совпадает с командой из Telegram"    "console.matches-telegram=true"
+expect "$L" "  русские глаголы работают и здесь"              "console.ru=true"
+expect "$L" "без ника из консоли — ошибка, а не догадка"      "console.needs-target=true"
+expect "$L" "  срок не принимается за ник"                    "console.duration-not-a-name=true"
+expect "$L" "свои подкоманды не перехватываются модерацией"   "console.reload-not-moderation=true"
+expect "$L" "  и import тоже"                                 "console.import-not-moderation=true"
+expect "$L" "опечатка не выполняется молча"                   "console.typo-unknown=true"
+
+echo
 echo "==> Telegram по настоящему сокету"
 expect "$C" "токен уходит в пути запроса"                     "api.token-in-path=true"
 expect "$C" "  getMe разбирается"                             "api.getme-username=sntelegram_test_bot"

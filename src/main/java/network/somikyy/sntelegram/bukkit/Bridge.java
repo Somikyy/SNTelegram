@@ -30,6 +30,7 @@ import org.bukkit.Bukkit;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Everything that has to know about both sides at once.
@@ -69,9 +70,15 @@ final class Bridge {
      */
     private volatile Boolean chatIsForum;
 
-    Bridge(Config config, MuteBook mutes, Scheduling scheduling, TelegramPoller.Log log) {
+    Bridge(Config config, MuteBook mutes, Moderation moderation, Scheduling scheduling,
+           TelegramPoller.Log log) {
         this.config = config;
         this.mutes = mutes;
+        // Handed in rather than created here: the plugin owns it, so that moderation from the
+        // server console keeps working when the bridge is not running at all. That is the whole
+        // point of having a console path - if a misconfigured or unreachable Telegram could take
+        // away the ability to unmute someone, a permanent mute would be permanent for real.
+        this.moderation = moderation;
         this.scheduling = scheduling;
         this.log = log;
 
@@ -89,7 +96,6 @@ final class Bridge {
         // Roughly an hour of chat on a busy server: enough that replying to something from
         // earlier in the evening still works, small enough to be invisible in memory.
         this.index = new MessageIndex(2000);
-        this.moderation = new Moderation(mutes, false);
     }
 
     void start() {
@@ -288,7 +294,7 @@ final class Bridge {
         // Answers go twice: once where the command was typed, and once into the moderation log
         // topic if the admin configured one. Both, because the person who typed it needs the
         // outcome immediately and the rest of the team needs the record.
-        java.util.function.Consumer<String> answer = html -> {
+        Consumer<String> answer = html -> {
             reply(thread, html);
             Topic target = config.topicFor(EventKind.MODERATION);
             if (target == null) {
@@ -298,14 +304,37 @@ final class Bridge {
             // "topic" is the same conversation, so the echo would simply print the same
             // sentence twice under the command - which is exactly what it did on the first
             // live test.
-            boolean elsewhere = Boolean.FALSE.equals(chatIsForum)
-                    ? false
-                    : (thread == null ? target.hasThread() : target.threadId() != thread);
+            boolean elsewhere = !Boolean.FALSE.equals(chatIsForum)
+                    && (thread == null ? target.hasThread() : target.threadId() != thread);
             if (elsewhere) {
                 sendEvent(EventKind.MODERATION,
                         config.templates().moderation().replace("{message}", html));
             }
         };
+        run(command, by, answer, html -> reply(thread, html));
+    }
+
+    /**
+     * Announces into Telegram that something was moderated from the server console.
+     *
+     * <p>Separate from {@link #execute} because there is nowhere to "reply" to: the person who
+     * typed it is looking at the console, and the only thing Telegram needs is the record.
+     */
+    void announceModeration(String html) {
+        sendEvent(EventKind.MODERATION, config.templates().moderation().replace("{message}", html));
+    }
+
+    /**
+     * Carries out a parsed command.
+     *
+     * <p>Split out so the same switch serves both entry points - a command typed in Telegram and
+     * one typed at the server console. Two copies of this would drift, and the copy that drifted
+     * would be the console one, which is the one used when something has already gone wrong.
+     *
+     * @param answer receives the outcome of an action that changed something
+     * @param info   receives the outcome of a read-only verb
+     */
+    void run(ModerationCommand command, String by, Consumer<String> answer, Consumer<String> info) {
         switch (command.action()) {
             case MUTE -> moderation.mute(command.targetName(), command.durationMillis(),
                     command.reason(), by, answer);
@@ -316,23 +345,23 @@ final class Bridge {
             case UNBAN -> moderation.unban(command.targetName(), answer);
             // The read-only verbs answer only where they were asked; echoing "who is online"
             // into the moderation log would bury the entries that matter.
-            case INFO -> moderation.info(command.targetName(), html -> reply(thread, html));
-            case LIST -> reply(thread, onlineList());
-            case STATUS -> reply(thread, status());
-            case SAY -> say(command.reason(), by, thread);
-            case HELP -> reply(thread, help());
+            case INFO -> moderation.info(command.targetName(), info);
+            case LIST -> info.accept(onlineList());
+            case STATUS -> info.accept(status());
+            case SAY -> say(command.reason(), by, info);
+            case HELP -> info.accept(help());
             default -> {
             }
         }
     }
 
-    private void say(String text, String by, Integer thread) {
+    private void say(String text, String by, Consumer<String> info) {
         if (text.isBlank()) {
-            reply(thread, "После /say нужен текст объявления.");
+            info.accept("После /say нужен текст объявления.");
             return;
         }
         Bukkit.broadcast(Component.text("[" + by + "] " + text));
-        reply(thread, "📢 Объявление отправлено в игру.");
+        info.accept("📢 Объявление отправлено в игру.");
     }
 
     private void showInGame(Topic topic, IncomingMessage message) {
@@ -377,7 +406,7 @@ final class Bridge {
                 + ", потеряно " + outbox.droppedCount() + ")";
     }
 
-    private static String help() {
+    static String help() {
         return "<b>SNTelegram — команды</b>\n\n"
                 + "Ответьте на сообщение игрока и напишите:\n"
                 + "<code>/мут 10м причина</code> — запретить писать в чат\n"
