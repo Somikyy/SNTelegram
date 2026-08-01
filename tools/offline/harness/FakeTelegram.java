@@ -84,11 +84,23 @@ public final class FakeTelegram {
     }
 
     public FakeTelegram(String token) throws IOException {
+        this(token, 0);
+    }
+
+    /**
+     * @param port {@code 0} to let the OS pick, or a specific port to reoccupy
+     *
+     * <p>Reoccupying a port is how the outage test works: the server is stopped to break the
+     * connection, then a new one is started on the same port to represent the network coming
+     * back. Without that the bridge would be pointed at a different address after the outage,
+     * which is not what recovering from an outage means.
+     */
+    public FakeTelegram(String token, int port) throws IOException {
         this.token = token;
-        // Port 0: the OS picks a free one. A fixed port makes the suite fail on a developer
-        // machine that happens to be using it, which is a false failure and erodes trust in
-        // the whole gate.
-        this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        // Port 0 by default: the OS picks a free one. A fixed port makes the suite fail on a
+        // developer machine that happens to be using it, which is a false failure and erodes
+        // trust in the whole gate.
+        this.server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
         this.server.createContext("/", this::handle);
         this.workers = Executors.newFixedThreadPool(4, r -> {
             Thread t = new Thread(r, "FakeTelegram-worker");
@@ -108,7 +120,11 @@ public final class FakeTelegram {
     }
 
     public String baseUrl() {
-        return "http://127.0.0.1:" + server.getAddress().getPort();
+        return "http://127.0.0.1:" + port();
+    }
+
+    public int port() {
+        return server.getAddress().getPort();
     }
 
     // ---------------------------------------------------------------- test control

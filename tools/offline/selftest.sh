@@ -202,6 +202,20 @@ expect "$C" "неверный chat-id объяснён"                      "ex
 expect "$C" "нехватка прав бота объяснена"                   "explain.no-rights=true"
 
 echo
+echo "==> группу превратили в супергруппу"
+expect "$C" "смена id замечена"                              "migrate.detected=true"
+expect "$C" "  новый id назван"                              "migrate.gives-new-id=true"
+expect "$C" "  и настройка, куда его вписать"                "migrate.names-the-setting=true"
+
+echo
+echo "==> обрыв связи с Telegram и восстановление"
+expect "$C" "до обрыва сообщения доходят"                    "outage.delivered-before=true"
+expect "$C" "жалоба в лог ровно одна, а не на каждую попытку" "outage.complains-once=true"
+expect "$C" "мост поднялся сам"                              "outage.recovered-by-itself=true"
+expect "$C" "  и сказал об этом"                             "outage.says-it-recovered=true"
+expect "$C" "  ничего не потеряно и не задвоено"             "outage.nothing-lost=true"
+
+echo
 echo "==> очередь отправки"
 expect "$C" "очередь ограничена"                              "outbox.bounded=true"
 expect "$C" "  переполнение видно вызывающему"                "outbox.reports-overflow=true"

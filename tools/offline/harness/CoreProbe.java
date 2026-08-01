@@ -67,10 +67,14 @@ public final class CoreProbe {
             pollingSkipsTheBacklog(api, fake);
             outboxSendsAndSurvivesThrottling(api, fake);
             configErrorsAreExplained(api, fake);
+            groupUpgradeIsExplained(api, fake);
             outboxDropsOldestWhenFull(api, fake);
         } finally {
             fake.stop();
         }
+        // Runs last and on its own servers: it stops and restarts one, which the cases above
+        // share and would not survive.
+        survivesAnOutage();
     }
 
     // ---------------------------------------------------------------- cases
@@ -223,6 +227,97 @@ public final class CoreProbe {
         System.out.println("explain.no-rights=" + logHas("администратора"));
 
         outbox.stop(500);
+    }
+
+    /**
+     * A group being upgraded to a supergroup, which changes its id permanently.
+     *
+     * <p>Happens the first time an admin turns on topics - so it happens to almost every server
+     * that follows the setup guide, once, and then never again. Telegram answers every subsequent
+     * send with a 400 that says nothing an admin can use; the new id is tucked into
+     * {@code parameters.migrate_to_chat_id}, and without reading it the only symptom is a bridge
+     * that stopped working for no visible reason.
+     *
+     * <p>Impossible to arrange on a live server without destroying the group under test, which is
+     * exactly the kind of thing a fake Bot API is for.
+     */
+    private static void groupUpgradeIsExplained(TelegramApi api, FakeTelegram fake) throws Exception {
+        RateLimiter fast = new RateLimiter(1000, 1000, System::nanoTime);
+        Outbox outbox = new Outbox(api, fast, 100, 60, LOGGER, System::nanoTime);
+        outbox.start();
+
+        LOG.clear();
+        fake.failNext("sendMessage", 400, "{\"ok\":false,\"error_code\":400,"
+                + "\"description\":\"Bad Request: group chat was upgraded to a supergroup chat\","
+                + "\"parameters\":{\"migrate_to_chat_id\":-1009876543210987}}");
+        outbox.enqueue(-1001234567890123L, "sendMessage", sendParams("после апгрейда"));
+        waitUntil(() -> logHas("супергруппу"), 8000);
+
+        System.out.println("migrate.detected=" + logHas("супергруппу"));
+        System.out.println("migrate.gives-new-id=" + logHas("-1009876543210987"));
+        System.out.println("migrate.names-the-setting=" + logHas("telegram.chat-id"));
+        outbox.stop(500);
+    }
+
+    /**
+     * Losing the route to Telegram, and getting it back.
+     *
+     * <p>The promise being tested is the one an admin actually cares about: an outage is invisible
+     * to players, quiet in the log, and repairs itself. "Quiet" is the part most easily got wrong -
+     * a bridge that logs every failed retry turns a lost hour into an unreadable log file, and on
+     * a Russian-hosted server losing the route for an hour is a normal Tuesday.
+     *
+     * <p>The fake server is stopped and then restarted on the same port, because recovering from
+     * an outage means the same address starting to answer again.
+     */
+    private static void survivesAnOutage() throws Exception {
+        FakeTelegram first = new FakeTelegram(TOKEN);
+        first.start();
+        int port = first.port();
+        TelegramApi api = new TelegramApi("http://127.0.0.1:" + port, TOKEN,
+                Duration.ofSeconds(2), Duration.ofSeconds(5), null, 0);
+
+        List<String> seen = new CopyOnWriteArrayList<>();
+        TelegramPoller poller = new TelegramPoller(api, 1, false,
+                u -> seen.add(u.obj("message").str("text", "")), LOGGER);
+        LOG.clear();
+        poller.start();
+
+        first.push(update(301, "до обрыва"));
+        waitUntil(() -> seen.contains("до обрыва"), 8000);
+        System.out.println("outage.delivered-before=" + seen.contains("до обрыва"));
+
+        // The network goes away.
+        first.stop();
+        waitUntil(() -> logHas("нет связи с Telegram"), 8000);
+        int firstComplaint = countLog("нет связи с Telegram");
+        // Several retries happen in this window; none of them may add another line.
+        Thread.sleep(3000L);
+        int laterComplaints = countLog("нет связи с Telegram");
+        System.out.println("outage.complains-once="
+                + (firstComplaint == 1 && laterComplaints == 1));
+
+        // The network comes back at the same address.
+        FakeTelegram again = new FakeTelegram(TOKEN, port);
+        again.start();
+        again.push(update(302, "после обрыва"));
+        waitUntil(() -> seen.contains("после обрыва"), 25000);
+        poller.stop();
+        again.stop();
+
+        System.out.println("outage.recovered-by-itself=" + seen.contains("после обрыва"));
+        System.out.println("outage.says-it-recovered=" + logHas("Связь с Telegram восстановлена"));
+        System.out.println("outage.nothing-lost=" + (seen.size() == 2));
+    }
+
+    private static int countLog(String needle) {
+        int n = 0;
+        for (String line : LOG) {
+            if (line.contains(needle)) {
+                n++;
+            }
+        }
+        return n;
     }
 
     private static boolean logHas(String needle) {
