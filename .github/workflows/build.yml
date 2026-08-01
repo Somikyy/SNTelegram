@@ -86,3 +86,38 @@ jobs:
         with:
           name: SNTelegram-jar
           path: build/offline/jar/SNTelegram-*.jar
+
+  # Compiling against the OLDEST supported API catches "this method does not exist yet".
+  # This job catches the opposite - "this method no longer exists" - which is the real risk on
+  # 26.x, because Paper 26.2 ships Adventure 5 and Adventure 5 removed API that was deprecated
+  # in 4. Until this existed the README claimed 26.x support that had never once been compiled,
+  # let alone run.
+  #
+  # It needs Java 25: paper-api 26.2 is published as Java 25 class files, and a Java 21 compiler
+  # cannot read them at all - the failure is "cannot access Bukkit", which looks like a missing
+  # dependency and is not.
+  compat-26x:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Both, in this order: the LAST one becomes JAVA_HOME, so Gradle itself runs on 21 (which
+      # it supports) while the toolchain it selects for javac is 25.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            25
+            21
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.10'
+
+      # 26.2.+ rather than a pinned build: this job is a canary for Paper breaking us, and a
+      # pinned version would quietly stop being a canary the day it went stale.
+      - name: Compile against Paper 26.2
+        run: >
+          gradle compileJava --no-daemon
+          -PpaperApi=26.2.+
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64

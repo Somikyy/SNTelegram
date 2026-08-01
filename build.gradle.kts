@@ -13,6 +13,13 @@ repositories {
     maven("https://repo.papermc.io/repository/maven-public/")
 }
 
+// Which server API to compile against. The default is the oldest supported line, because that is
+// what catches "this method does not exist yet"; CI additionally compiles against 26.2 to catch
+// the opposite - "this method no longer exists". Paper 26.2 ships Java 25 class files, so that
+// build needs a Java 25 compiler even though the output stays Java 17.
+val paperApi = (findProperty("paperApi") as String?) ?: "1.21.4-R0.1-SNAPSHOT"
+val compilerJava = if (paperApi.startsWith("26.")) 25 else 21
+
 dependencies {
     // The ONLY dependency, and it is compile-only: the server supplies these classes.
     // SNTelegram ships zero runtime dependencies on purpose. Every bridge that came before it
@@ -20,7 +27,7 @@ dependencies {
     // classpath is the most common way a plugin breaks a server it was supposed to help.
     // The whole Bot API client is about two hundred lines on java.net.http; the JSON reader is
     // another two hundred. That is a better trade than two megabytes of someone else's code.
-    compileOnly("io.papermc.paper:paper-api:1.21.4-R0.1-SNAPSHOT")
+    compileOnly("io.papermc.paper:paper-api:$paperApi")
 }
 
 // paper-api 1.21.4 ships Java 21 class files (major version 65). Gradle will not put a Java 21
@@ -35,7 +42,7 @@ dependencies {
 // classpath is allowed to contain and what we emit are separate questions. Say so.
 configurations.named("compileClasspath") {
     attributes {
-        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 21)
+        attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, compilerJava)
     }
 }
 
@@ -44,7 +51,7 @@ java {
     // .set() rather than `=`: assignment to a Property works only in newer Kotlin DSL, and a
     // build file that fails to parse on someone's Gradle is a support ticket for nothing.
     toolchain {
-        languageVersion.set(JavaLanguageVersion.of(21))
+        languageVersion.set(JavaLanguageVersion.of(compilerJava))
     }
 }
 
