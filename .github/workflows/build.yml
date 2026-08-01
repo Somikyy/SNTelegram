@@ -9,7 +9,7 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Both builds below must use the SAME JDK: the stub check compares the bytecode they
       # produce, and two different javac versions would show up as differences that mean nothing.
@@ -18,7 +18,7 @@ jobs:
       # a Java 17 classpath. Both builds compile with 21 and emit 17 (`--release 17` in
       # build-offline.sh, `options.release` in build.gradle.kts), so the jar still runs on the
       # 1.21.x servers that have not moved to Java 25.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -44,7 +44,7 @@ jobs:
       - name: Install Gradle
         id: gradle_setup
         continue-on-error: true
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.10'
 
@@ -82,7 +82,7 @@ jobs:
         if: steps.gradle_build.outcome != 'success'
         run: echo "::warning::Gradle build did not run, so the stubs were not checked against the real paper-api"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: SNTelegram-jar
           path: build/offline/jar/SNTelegram-*.jar
