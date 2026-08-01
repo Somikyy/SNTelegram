@@ -61,6 +61,14 @@ final class Bridge {
     private final Scheduling scheduling;
     private final TelegramPoller.Log log;
 
+    /**
+     * Whether the chat really has topics. {@code null} until Telegram has been asked.
+     *
+     * <p>Unknown means "behave as configured": if the answer never arrives, sending thread ids is
+     * the harmless choice, because a group without topics ignores them anyway.
+     */
+    private volatile Boolean chatIsForum;
+
     Bridge(Config config, MuteBook mutes, Scheduling scheduling, TelegramPoller.Log log) {
         this.config = config;
         this.mutes = mutes;
@@ -87,6 +95,41 @@ final class Bridge {
     void start() {
         outbox.start();
         poller.start();
+        askWhetherChatIsForum();
+    }
+
+    /**
+     * Finds out whether the configured chat actually has topics, because Telegram will not say so.
+     *
+     * <p>Sending {@code message_thread_id: 2} to a group with topics turned off does not fail. It
+     * is accepted and quietly ignored, so every configured topic lands in the same conversation
+     * and the admin sees no error anywhere - just messages that arrive twice and a "topics"
+     * section that does nothing. Found on a live server: the moderation confirmation appeared
+     * once as the reply and once as the log echo, both in the same chat.
+     *
+     * <p>So the bridge asks once, at startup, and then behaves accordingly. Asynchronous through
+     * the outbox rather than inline: this runs on the server thread during onEnable.
+     */
+    private void askWhetherChatIsForum() {
+        Map<String, Object> params = Json.map();
+        params.put("chat_id", config.chatId());
+        outbox.enqueue(config.chatId(), "getChat", params, chat -> {
+            boolean forum = chat.bool("is_forum", false);
+            chatIsForum = forum;
+            if (forum) {
+                return;
+            }
+            boolean topicsConfigured = false;
+            for (Topic topic : config.topics()) {
+                topicsConfigured |= topic.hasThread();
+            }
+            if (topicsConfigured) {
+                log.warn("В группе «" + chat.str("title", "?") + "» не включены темы форума, "
+                        + "а в config.yml они настроены. Telegram молча игнорирует номера тем, "
+                        + "поэтому всё уходит в общий чат. Либо включи темы в настройках группы, "
+                        + "либо оставь одну тему с thread-id: 0.");
+            }
+        });
     }
 
     void stop() {
@@ -143,11 +186,22 @@ final class Bridge {
     void reply(Integer threadId, String html) {
         Map<String, Object> params = Json.map();
         params.put("chat_id", config.chatId());
-        params.put("message_thread_id", threadId);
+        params.put("message_thread_id", threadOrNull(threadId));
         params.put("text", TelegramText.fit(html));
         params.put("parse_mode", "HTML");
         params.put("link_preview_options", Map.of("is_disabled", true));
         outbox.enqueue(config.chatId(), "sendMessage", params);
+    }
+
+    /**
+     * The thread id to actually send, or {@code null} to omit the parameter.
+     *
+     * <p>Once the chat is known not to be a forum, thread ids are dropped rather than sent and
+     * ignored. Sending them would work identically, but dropping them keeps the request honest
+     * and makes the "is this a forum" answer visible in one place rather than five.
+     */
+    private Integer threadOrNull(Integer threadId) {
+        return Boolean.FALSE.equals(chatIsForum) ? null : threadId;
     }
 
     private Map<String, Object> sendParams(Topic topic, String html) {
@@ -155,7 +209,7 @@ final class Bridge {
         params.put("chat_id", config.chatId());
         // Null for the General topic, and Json.write omits null keys. Sending 1 here - the
         // number every tutorial claims General is - answers 400.
-        params.put("message_thread_id", topic.threadParameter());
+        params.put("message_thread_id", threadOrNull(topic.threadParameter()));
         params.put("text", TelegramText.fit(html));
         params.put("parse_mode", "HTML");
         // Chat is full of links players paste at each other; a preview card under every one of
@@ -236,8 +290,18 @@ final class Bridge {
         // outcome immediately and the rest of the team needs the record.
         java.util.function.Consumer<String> answer = html -> {
             reply(thread, html);
-            Topic log = config.topicFor(EventKind.MODERATION);
-            if (log != null && (thread == null ? log.hasThread() : log.threadId() != thread)) {
+            Topic target = config.topicFor(EventKind.MODERATION);
+            if (target == null) {
+                return;
+            }
+            // Only echo when the log genuinely lands somewhere else. Without topics every
+            // "topic" is the same conversation, so the echo would simply print the same
+            // sentence twice under the command - which is exactly what it did on the first
+            // live test.
+            boolean elsewhere = Boolean.FALSE.equals(chatIsForum)
+                    ? false
+                    : (thread == null ? target.hasThread() : target.threadId() != thread);
+            if (elsewhere) {
                 sendEvent(EventKind.MODERATION,
                         config.templates().moderation().replace("{message}", html));
             }
