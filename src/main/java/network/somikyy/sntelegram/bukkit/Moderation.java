@@ -48,9 +48,6 @@ import java.util.function.Consumer;
  */
 final class Moderation {
 
-    /** Who bans are attributed to in the ban list, so an admin reading banlist.json can tell. */
-    private static final String SOURCE = "SNTelegram";
-
     private final MuteBook mutes;
     private final boolean showAddresses;
 
@@ -137,9 +134,18 @@ final class Moderation {
 
         Player online = target.online();
         if (online != null) {
-            // The overload with the kick flag: banning someone who is standing in the world and
-            // leaving them connected is a bug that looks like a working ban until they log out.
-            online.ban(text, expires, by, true);
+            // Ban first WITHOUT the kick flag, then kick with our own text.
+            //
+            // The kick flag looks like the obvious choice and produces a bad screen: the server
+            // disconnects with the ban reason as the entire message, so a player banned with
+            // reason "флуд" sees a screen that says, in full, "флуд". No mention of a ban, no
+            // duration, nothing to appeal against. Seen on the first live test, where the reason
+            // was "1" and so was the whole disconnect screen.
+            //
+            // Both calls are on the server thread in the same tick, so there is no window in
+            // which the player is banned but still connected.
+            online.ban(text, expires, by, false);
+            online.kick(Component.text(banText(durationMillis, reason)));
         } else {
             target.offline().ban(text, expires, by);
         }
@@ -269,6 +275,19 @@ final class Moderation {
         return reason.isEmpty()
                 ? "Вы отключены от сервера администратором " + by
                 : "Вы отключены от сервера: " + reason;
+    }
+
+    /**
+     * What a banned player sees at the moment of the ban.
+     *
+     * <p>Deliberately says the same thing the server's own ban screen says on the next connection
+     * attempt, so the two do not contradict each other: what happened, for how long, and why.
+     */
+    private static String banText(long durationMillis, String reason) {
+        String head = durationMillis == TimeSpan.PERMANENT
+                ? "Вы забанены навсегда."
+                : "Вы забанены на " + TimeSpan.russian(durationMillis) + ".";
+        return reason.isEmpty() ? head : head + " Причина: " + reason;
     }
 
     /** Escapes a reason before it goes into a MiniMessage template built for the player. */
