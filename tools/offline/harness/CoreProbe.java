@@ -66,6 +66,7 @@ public final class CoreProbe {
             pollingDeliversUpdatesInOrder(api, fake);
             pollingSkipsTheBacklog(api, fake);
             outboxSendsAndSurvivesThrottling(api, fake);
+            configErrorsAreExplained(api, fake);
             outboxDropsOldestWhenFull(api, fake);
         } finally {
             fake.stop();
@@ -175,6 +176,62 @@ public final class CoreProbe {
                         .bodyHas("message_thread_id"));
         System.out.println("outbox.body-has-html="
                 + fake.callsTo("sendMessage").get(0).bodyHas("\"parse_mode\":\"HTML\""));
+    }
+
+    /**
+     * Configuration mistakes must be reported in words the admin can act on.
+     *
+     * <p>Every one of these is a real setup step going wrong, and Telegram's own wording names
+     * the mechanism rather than the setting: "message thread not found" does not mention
+     * config.yml, thread-id, or where the right number comes from. The first live server hit
+     * exactly this one, on the very next restart after topics were switched on.
+     */
+    private static void configErrorsAreExplained(TelegramApi api, FakeTelegram fake) throws Exception {
+        RateLimiter fast = new RateLimiter(1000, 1000, System::nanoTime);
+        Outbox outbox = new Outbox(api, fast, 100, 60, LOGGER, System::nanoTime);
+        outbox.start();
+
+        LOG.clear();
+        fake.failNext("sendMessage", 400, "{\"ok\":false,\"error_code\":400,"
+                + "\"description\":\"Bad Request: message thread not found\"}");
+        outbox.enqueue(-1001234567890123L, "sendMessage", sendParams("в тему 2"));
+        waitUntil(() -> logHas("нет темы с номером"), 8000);
+        System.out.println("explain.missing-topic=" + logHas("нет темы с номером 2"));
+        System.out.println("explain.points-at-config=" + logHas("config.yml"));
+        System.out.println("explain.explains-general=" + logHas("General"));
+
+        // The same mistake repeated must not fill the log with identical lines.
+        int before = LOG.size();
+        fake.failNext("sendMessage", 400, "{\"ok\":false,\"error_code\":400,"
+                + "\"description\":\"Bad Request: message thread not found\"}");
+        outbox.enqueue(-1001234567890123L, "sendMessage", sendParams("снова в тему 2"));
+        Thread.sleep(800L);
+        System.out.println("explain.not-repeated=" + (LOG.size() == before));
+
+        LOG.clear();
+        fake.failNext("sendMessage", 400, "{\"ok\":false,\"error_code\":400,"
+                + "\"description\":\"Bad Request: chat not found\"}");
+        outbox.enqueue(-1001234567890123L, "sendMessage", sendParams("никуда"));
+        waitUntil(() -> logHas("не знает чат"), 8000);
+        System.out.println("explain.chat-not-found=" + logHas("отрицательный"));
+
+        LOG.clear();
+        fake.failNext("sendMessage", 400, "{\"ok\":false,\"error_code\":400,"
+                + "\"description\":\"Bad Request: not enough rights to send text messages\"}");
+        outbox.enqueue(-1001234567890123L, "sendMessage", sendParams("нет прав"));
+        waitUntil(() -> logHas("нет прав писать"), 8000);
+        System.out.println("explain.no-rights=" + logHas("администратора"));
+
+        outbox.stop(500);
+    }
+
+    private static boolean logHas(String needle) {
+        for (String line : LOG) {
+            if (line.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void outboxDropsOldestWhenFull(TelegramApi api, FakeTelegram fake) {

@@ -189,6 +189,17 @@ expect "$C" "после 429 сообщение всё же уходит"        
 expect "$C" "  запрос повторяется"                            "outbox.retried=true"
 expect "$C" "  message_thread_id в теле"                      "outbox.body-has-thread=true"
 expect "$C" "  parse_mode=HTML в теле"                        "outbox.body-has-html=true"
+echo
+echo "==> ошибки настройки объясняются словами"
+expect "$C" "несуществующая тема названа по номеру"          "explain.missing-topic=true"
+expect "$C" "  и указан файл, где её чинить"                 "explain.points-at-config=true"
+expect "$C" "  и что для General нужен 0"                    "explain.explains-general=true"
+expect "$C" "  повтор не засоряет лог"                       "explain.not-repeated=true"
+expect "$C" "неверный chat-id объяснён"                      "explain.chat-not-found=true"
+expect "$C" "нехватка прав бота объяснена"                   "explain.no-rights=true"
+
+echo
+echo "==> очередь отправки"
 expect "$C" "очередь ограничена"                              "outbox.bounded=true"
 expect "$C" "  переполнение видно вызывающему"                "outbox.reports-overflow=true"
 expect "$C" "  потери считаются"                              "outbox.counts-drops=true"

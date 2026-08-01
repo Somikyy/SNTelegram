@@ -10,6 +10,8 @@
 package network.somikyy.sntelegram.core;
 
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -50,6 +52,9 @@ public final class Outbox implements Runnable {
     private volatile long sent;
     private volatile long dropped;
     private volatile long failed;
+
+    /** Topic ids already complained about, so a wrong thread-id costs one log line, not hundreds. */
+    private final Set<String> complainedAboutThreads = ConcurrentHashMap.newKeySet();
 
     public Outbox(TelegramApi api, RateLimiter limiter, int capacity, long maxAgeSeconds,
                   TelegramPoller.Log log, LongSupplier nanos) {
@@ -250,8 +255,51 @@ public final class Outbox implements Runnable {
         if (e.code() == 400 || e.code() == 403) {
             // These are configuration errors, not weather: a wrong chat id, a bot that was
             // removed from the group, a topic that no longer exists. Worth one clear line.
-            log.warn(e.getMessage() + " (чат " + task.chatId() + ")");
+            String explained = explain(e, task);
+            if (!explained.isEmpty()) {
+                log.warn(explained);
+            }
         }
+    }
+
+    /**
+     * Turns a Bot API refusal into something an admin can act on.
+     *
+     * <p>Telegram's own wording names the mechanism, never the setting. "Bad Request: message
+     * thread not found" is accurate and useless: it does not say which topic, where the number
+     * came from, or what to type instead. This is the exact error a server hits the moment topics
+     * are switched on in a group whose {@code thread-id} values were guessed - which is a normal
+     * step in setting the plugin up, not an exotic failure.
+     *
+     * <p>Reported once per topic. The alternative is one identical line per moderation action for
+     * as long as the config stays wrong, which trains people to ignore the log.
+     */
+    private String explain(TelegramException e, Task task) {
+        String description = String.valueOf(e.getMessage());
+        Object thread = task.params() == null ? null : task.params().get("message_thread_id");
+        if (thread != null && description.contains("message thread not found")) {
+            if (!complainedAboutThreads.add(String.valueOf(thread))) {
+                return "";
+            }
+            return "В группе нет темы с номером " + thread + ", поэтому сообщение туда не ушло. "
+                    + "Проверь thread-id в разделе topics файла config.yml: настоящий номер видно "
+                    + "в ссылке на тему — t.me/c/…/" + thread + " ← вот это число. "
+                    + "Для главной темы группы (General) нужен 0.";
+        }
+        if (description.contains("chat not found")) {
+            return "Telegram не знает чат " + task.chatId() + ". Обычно это значит, что бота "
+                    + "не добавили в группу, либо telegram.chat-id указан с ошибкой — у группы "
+                    + "он отрицательный.";
+        }
+        if (description.contains("bot was kicked") || description.contains("not a member")) {
+            return "Бота удалили из группы " + task.chatId() + " — мост не сможет ничего "
+                    + "отправить, пока его не вернут и не выдадут права администратора.";
+        }
+        if (description.contains("not enough rights")) {
+            return "У бота нет прав писать в группу " + task.chatId() + ". Выдай ему "
+                    + "администратора: без этого он не видит сообщения и не может отвечать.";
+        }
+        return e.getMessage() + " (чат " + task.chatId() + ")";
     }
 
     /** @return false if interrupted, meaning the caller must return */
