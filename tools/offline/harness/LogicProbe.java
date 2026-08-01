@@ -217,6 +217,24 @@ public final class LogicProbe {
                 "  b:",
                 "    thread-id: 5",
                 "    from-telegram: false"));
+        // thread-id: 1 is the mistake every tutorial teaches. It is never valid in the Bot API,
+        // so it is read as General rather than left to fail on every single message - and the
+        // admin is told exactly what happened. Reproduced on a live server before this existed.
+        Config generalAsOne = Config.load(String.join("\n",
+                "telegram:",
+                "  token: '7000000001:AAF-not-a-real-secret'",
+                "  chat-id: -1001234567890123",
+                "topics:",
+                "  основной:",
+                "    thread-id: 1",
+                "    events: [chat]"));
+        System.out.println("config.thread-1-becomes-general="
+                + (generalAsOne.topics().get(0).threadId() == Topic.GENERAL));
+        System.out.println("config.thread-1-omits-parameter="
+                + (generalAsOne.topics().get(0).threadParameter() == null));
+        System.out.println("config.thread-1-warns="
+                + anyContains(generalAsOne.warnings(), "thread-id: 1"));
+
         System.out.println("config.warns-bad-token=" + anyContains(broken.warnings(), "не похоже на токен"));
         System.out.println("config.warns-positive-chat=" + anyContains(broken.warnings(), "личный чат"));
         System.out.println("config.warns-unknown-event=" + anyContains(broken.warnings(), "нетакого"));

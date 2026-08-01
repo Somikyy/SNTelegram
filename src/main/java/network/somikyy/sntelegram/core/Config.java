@@ -166,6 +166,19 @@ public final class Config {
         for (String name : names) {
             String path = "topics." + name;
             int threadId = y.getInt(path + ".thread-id", Topic.GENERAL, 0, Integer.MAX_VALUE);
+            if (threadId == 1) {
+                // 1 is never a valid thread id in the Bot API. It is General's id at the MTProto
+                // level - which is what every tutorial repeats - and the Bot API filters that
+                // constant out on the way in and on the way out, so sending it answers 400
+                // "message thread not found". An admin who wrote 1 wanted General and there is no
+                // other thing they could have wanted, so take it as General and say so: the
+                // alternative is a main chat topic where nothing works at all.
+                b.warnings.add("В теме «" + name + "» указан thread-id: 1. Это распространённая "
+                        + "ошибка: у главной темы (General) в Bot API нет номера, и значение 1 "
+                        + "Telegram отвергает. Читаю как General; впиши 0, чтобы предупреждение "
+                        + "не повторялось.");
+                threadId = Topic.GENERAL;
+            }
             Set<EventKind> kinds = EnumSet.noneOf(EventKind.class);
             List<String> declared = y.getList(path + ".events");
             if (declared.isEmpty()) {
