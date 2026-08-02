@@ -1,0 +1,102 @@
+name: release
+
+# Cut a release by pushing a tag:  git tag v26.8.1 && git push origin v26.8.1
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Two JDKs. The last one listed becomes JAVA_HOME, so Gradle runs on 21 - which it
+      # supports - while the 26.2 compatibility step below selects 25 as a toolchain.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: |
+            25
+            21
+
+      # Behaviour is proven offline first: 127 assertions, no network, no server.
+      - name: Self-test (offline)
+        run: bash tools/offline/verify.sh
+
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.10'
+
+      # The published jar is built against the REAL paper-api, never against the offline stubs.
+      # A stub with the wrong descriptor compiles fine and then throws NoSuchMethodError on a
+      # live server, and no admin should ever be the one to find that out. Unlike in the build
+      # workflow, nothing here may fail: a release that cannot be built against the real API is
+      # not a release.
+      - name: Build against the real paper-api
+        run: gradle build --no-daemon
+
+      - name: Stubs must match the real paper-api
+        run: |
+          bash tools/offline/api-surface.sh build/offline/classes --all > /tmp/from-stubs.txt
+          bash tools/offline/api-surface.sh build/classes/java/main --all > /tmp/from-paper.txt
+          if ! diff -u /tmp/from-paper.txt /tmp/from-stubs.txt; then
+            echo "::error::tools/offline/bukkit-stubs disagrees with the real paper-api"
+            exit 1
+          fi
+          echo "stubs agree with paper-api"
+
+      # Blocking here, unlike in the build workflow. Shipping a jar that cannot even be compiled
+      # against the newest supported Paper is not something to discover after publishing.
+      - name: Compile against Paper 26.2
+        run: >
+          gradle compileJava --no-daemon
+          -PpaperApi=26.2.+
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_25_X64
+
+      # A tag that disagrees with the version compiled into the jar would advertise a release
+      # that does not exist inside the file. Cheaper to catch here than in a bug report.
+      - name: Tag must match the compiled version
+        run: |
+          VERSION="$(grep -oP 'VERSION = "\K[^"]+' src/main/java/network/somikyy/sntelegram/core/Build.java)"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [[ "$VERSION" != "$TAG" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Build.VERSION=$VERSION"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      # The jar must not contain the compile-only stubs. Shipping org/bukkit/Bukkit.class would
+      # shadow the server's own class on some loaders and break in a way nobody would connect
+      # back to this plugin. The offline build checks this too; a release checks it again,
+      # because this is the artefact people actually download.
+      - name: The jar must contain no server classes
+        run: |
+          if unzip -l "build/libs/SNTelegram-$VERSION.jar" \
+              | grep -qE ' (org/bukkit|net/kyori|io/papermc|com/destroystokyo)/'; then
+            echo "::error::the jar contains server classes"
+            exit 1
+          fi
+          echo "jar carries only SNTelegram classes"
+
+      - name: Publish the jar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="docs/RELEASE-NOTES-$VERSION.md"
+          if [[ -f "$NOTES" ]]; then
+            NOTES_ARG=(--notes-file "$NOTES")
+          else
+            NOTES_ARG=(--notes "Модерация Minecraft-сервера прямо из Telegram. Установка и описание — в README репозитория.")
+          fi
+          # The release may already exist as a draft prepared by hand; that is fine.
+          gh release create "$GITHUB_REF_NAME" \
+             --title "SNTelegram $VERSION" \
+             "${NOTES_ARG[@]}" \
+             || echo "release already exists, uploading into it"
+          gh release upload "$GITHUB_REF_NAME" \
+             "build/libs/SNTelegram-$VERSION.jar" --clobber

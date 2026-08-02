@@ -5,7 +5,16 @@ plugins {
 }
 
 group = "network.somikyy"
-version = "26.8.1"
+
+// Read from Build.java rather than repeated here. The offline build script already reads that
+// file, and the release workflow checks the git tag against it - three places that must agree,
+// so there is exactly one place to change. A jar whose manifest says one version while the code
+// reports another is a bug report nobody can make sense of.
+version = file("src/main/java/network/somikyy/sntelegram/core/Build.java")
+    .readLines()
+    .first { it.contains("VERSION = \"") }
+    .substringAfter("VERSION = \"")
+    .substringBefore('"')
 description = "Two-way chat bridge between a Minecraft server and Telegram, with moderation from the chat itself"
 
 repositories {
